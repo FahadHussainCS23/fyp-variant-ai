@@ -1,0 +1,7 @@
+# Python ignore
+__pycache__/
+.venv/
+.ipynb_checkpoints/
+
+# Data ignore (Raw data ko github par nahi dalna)
+data/raw/
