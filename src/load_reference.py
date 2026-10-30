@@ -1,71 +1,64 @@
 from collections import Counter
 import gzip
 import os
+
 import pandas as pd
 
-# Paths
-fasta_path = os.path.join("data", "raw", "chr21.fa.gz")
-csv_path = os.path.join("data", "processed", "features_basic.csv")
 
-# 1. Load and parse FASTA reference genome
-print("Loading reference genome from FASTA...")
-if not os.path.exists(fasta_path):
-  raise FileNotFoundError(
-      f"'{fasta_path}' nahi mili. Pehle file ko data/raw/ mein rakhein!"
-  )
+def load_chr21_sequence():
+    """Load the uppercase chr21 reference sequence from the compressed FASTA."""
+    fasta_path = os.path.join("data", "raw", "chr21.fa.gz")
+    if not os.path.exists(fasta_path):
+        raise FileNotFoundError(
+            f"Reference FASTA not found at '{fasta_path}'."
+        )
 
-seq_lines = []
-with gzip.open(fasta_path, "rt") as f:
-  for line in f:
-    if line.startswith(">"):
-      continue
-    seq_lines.append(line.strip())
+    with gzip.open(fasta_path, "rt") as fasta_file:
+        sequence = "".join(
+            line.strip()
+            for line in fasta_file
+            if not line.startswith(">")
+        )
+    return sequence.upper()
 
-# Join all lines and convert to uppercase (handling lowercase repeats)
-seq = "".join(seq_lines).upper()
-print(f"Reference sequence length: {len(seq)}")
 
-# Base counts (A, C, G, T, N, etc.)
-print("\nBase composition:")
-print(Counter(seq))
+if __name__ == "__main__":
+    csv_path = os.path.join("data", "processed", "features_basic.csv")
 
-# 2. Load features dataset and check coordinate matching
-print("\nChecking coordinate matching with features_basic.csv...")
-df = pd.read_csv(csv_path)
+    print("Loading reference genome from FASTA...")
+    seq = load_chr21_sequence()
+    print(f"Reference sequence length: {len(seq)}")
+    print("\nBase composition:")
+    print(Counter(seq))
 
-matches = 0
-mismatches = []
+    print("\nChecking coordinate matching with features_basic.csv...")
+    df = pd.read_csv(csv_path)
 
-for idx, row in df.iterrows():
-  pos = int(row["POS"])
-  ref_vcf = row["REF"]
+    matches = 0
+    mismatches = []
+    for _, row in df.iterrows():
+        pos = int(row["POS"])
+        ref_vcf = row["REF"]
+        if 1 <= pos <= len(seq):
+            ref_fasta = seq[pos - 1]
+            if ref_fasta == ref_vcf:
+                matches += 1
+            elif len(mismatches) < 5:
+                mismatches.append({
+                    "POS": pos,
+                    "REF_vcf": ref_vcf,
+                    "REF_fasta": ref_fasta,
+                    "GeneSymbol": row.get("GeneSymbol", "N/A"),
+                })
 
-  # VCF is 1-based, Python index is 0-based -> seq[pos - 1]
-  if 1 <= pos <= len(seq):
-    ref_fasta = seq[pos - 1]
-    if ref_fasta == ref_vcf:
-      matches += 1
+    total_rows = len(df)
+    match_percentage = (matches / total_rows) * 100
+    print(f"\nTotal rows checked: {total_rows}")
+    print(f"Coordinate Match Percentage: {match_percentage:.4f}%")
+
+    if mismatches:
+        print("\nSample Mismatches (POS, REF_vcf, REF_fasta):")
+        for mismatch in mismatches:
+            print(mismatch)
     else:
-      if len(mismatches) < 5:
-        mismatches.append({
-            "POS": pos,
-            "REF_vcf": ref_vcf,
-            "REF_fasta": ref_fasta,
-            "GeneSymbol": row.get("GeneSymbol", "N/A"),
-        })
-  else:
-    # Position out of bounds
-    pass
-
-total_rows = len(df)
-match_percentage = (matches / total_rows) * 100
-
-print(f"\nTotal rows checked: {total_rows}")
-print(f"Coordinate Match Percentage: {match_percentage:.4f}%")
-
-if mismatches:
-  print("\nSample Mismatches (POS, REF_vcf, REF_fasta):")
-  for m in mismatches:
-    print(m)
-else:
-  print("\nAll coordinates match perfectly with the reference genome!")
+        print("\nAll coordinates match perfectly with the reference genome!")

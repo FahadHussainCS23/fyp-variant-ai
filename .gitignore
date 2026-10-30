@@ -7,3 +7,5 @@ __pycache__/
 data/raw/
 
 data/processed/1000g_chr21_af.csv
+
+models/*.joblib
