@@ -5,3 +5,5 @@ __pycache__/
 
 # Data ignore (Raw data ko github par nahi dalna)
 data/raw/
+
+data/processed/1000g_chr21_af.csv
