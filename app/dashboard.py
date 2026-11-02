@@ -12,16 +12,48 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.explain_shap import FEATURE_COLUMNS, pathogenic_shap_values
+from src.explain_shap import pathogenic_shap_values
 from src.features_reference import gc_content, is_cpg
 from src.load_reference import load_chr21_sequence
 
 
 AF_PATH = os.path.join("data", "processed", "1000g_chr21_af.csv")
-MODEL_PATH = os.path.join("models", "rf_full.joblib")
+CONSEQUENCE_PATH = os.path.join(
+    "data", "processed", "clinvar_mc_chr21.csv"
+)
+CONSEQUENCE_MAPPING_PATH = os.path.join(
+    "data", "processed", "consequence_mapping.csv"
+)
+MODEL_PATH = os.path.join("models", "xgb_consequence.joblib")
 FREQUENCY_COLUMNS = [
     "AF_precise", "SAS_AF", "EUR_AF", "AFR_AF", "EAS_AF", "AMR_AF",
 ]
+FEATURE_COLUMNS = [
+    "AF_precise",
+    "SAS_AF",
+    "EUR_AF",
+    "AFR_AF",
+    "EAS_AF",
+    "AMR_AF",
+    "in_1000g",
+    "substitution",
+    "is_transition",
+    "is_CT_or_GA",
+    "gc_50",
+    "gc_500",
+    "is_cpg",
+    "is_cpg_transition",
+    "consequence_group",
+    "is_lof",
+    "is_missense",
+]
+LOF_CONSEQUENCES = {
+    "nonsense",
+    "splice_donor_variant",
+    "splice_acceptor_variant",
+    "initiator_codon_variant",
+    "stop_lost",
+}
 
 
 @st.cache_resource
@@ -42,7 +74,43 @@ def load_population_frequencies():
     return frequencies.set_index(["POS", "REF", "ALT"])
 
 
-def build_variant_features(seq, pos, ref, alt, frequencies):
+@st.cache_data
+def load_consequence_annotations():
+    columns = ["POS", "REF", "ALT", "consequence_primary"]
+    annotations = pd.read_csv(CONSEQUENCE_PATH, usecols=columns)
+    return annotations.set_index(["POS", "REF", "ALT"])
+
+
+@st.cache_data
+def load_consequence_mapping():
+    mapping = pd.read_csv(CONSEQUENCE_MAPPING_PATH)
+    return mapping.drop_duplicates("consequence_primary").set_index(
+        "consequence_primary"
+    )["consequence_group"]
+
+
+def lookup_consequence(pos, ref, alt, annotations, mapping):
+    key = (pos, ref, alt)
+    if key not in annotations.index:
+        return "unknown", "unknown", False
+
+    annotation = annotations.loc[key]
+    primary = annotation["consequence_primary"]
+    if pd.isna(primary) or not primary:
+        primary = "unknown"
+    consequence_group = mapping.get(primary, "other")
+    return primary, consequence_group, True
+
+
+def build_variant_features(
+    seq,
+    pos,
+    ref,
+    alt,
+    frequencies,
+    consequence_primary="unknown",
+    consequence_group="unknown",
+):
     substitution = f"{ref}>{alt}"
     is_transition = int(
         substitution in {"A>G", "G>A", "C>T", "T>C"}
@@ -65,6 +133,9 @@ def build_variant_features(seq, pos, ref, alt, frequencies):
         "gc_500": gc_content(seq, pos, 500),
         "is_cpg": cpg,
         "is_cpg_transition": int(cpg and is_ct_or_ga),
+        "consequence_group": consequence_group,
+        "is_lof": int(consequence_primary in LOF_CONSEQUENCES),
+        "is_missense": int(consequence_primary == "missense_variant"),
     }
 
     key = (pos, ref, alt)
@@ -112,9 +183,17 @@ def main():
     st.title("Chromosome 21 Variant Pathogenicity Predictor")
     st.write("Chromosome: 21")
     st.caption("Research prototype for an FYP, not for clinical use.")
+    st.info(
+        "Consequence is a very strong signal (nonsense and splice variants "
+        "are almost always pathogenic). On missense variants alone the "
+        "model's ROC-AUC is about 0.80, so treat predictions for missense "
+        "variants with extra caution."
+    )
 
     seq = cached_sequence()
     frequencies = load_population_frequencies()
+    consequences = load_consequence_annotations()
+    consequence_mapping = load_consequence_mapping()
     with st.form("variant_form"):
         pos = st.number_input(
             "Position (1-based)", value=1, step=1, format="%d"
@@ -140,14 +219,38 @@ def main():
         )
         return
 
+    consequence_primary, consequence_group, consequence_found = (
+        lookup_consequence(
+            pos,
+            ref,
+            alt,
+            consequences,
+            consequence_mapping,
+        )
+    )
     feature_values = build_variant_features(
-        seq, pos, ref, alt, frequencies
+        seq,
+        pos,
+        ref,
+        alt,
+        frequencies,
+        consequence_primary,
+        consequence_group,
     )
     pipeline = cached_model()
     feature_frame = pd.DataFrame([feature_values], columns=FEATURE_COLUMNS)
     probability = float(pipeline.predict_proba(feature_frame)[0, 1])
     prediction = "Pathogenic" if probability >= 0.5 else "Benign"
 
+    st.write(
+        "Consequence (from ClinVar annotation): "
+        f"{consequence_primary or 'unknown'}"
+    )
+    if not consequence_found:
+        st.warning(
+            "No ClinVar annotation found for this variant, so molecular "
+            "consequence is set to unknown; predictions are less reliable."
+        )
     st.metric("Predicted probability of pathogenicity", f"{probability:.1%}")
     st.subheader(prediction)
     figure = explain_variant(pipeline, feature_values)

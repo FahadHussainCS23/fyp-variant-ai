@@ -1,0 +1,15 @@
+consequence_primary,consequence_group
+3_prime_UTR_variant,3_prime_UTR_variant
+5_prime_UTR_variant,5_prime_UTR_variant
+genic_downstream_transcript_variant,other
+genic_upstream_transcript_variant,other
+initiator_codon_variant,other
+intron_variant,intron_variant
+missense_variant,missense_variant
+non-coding_transcript_variant,non-coding_transcript_variant
+nonsense,nonsense
+splice_acceptor_variant,splice_acceptor_variant
+splice_donor_variant,splice_donor_variant
+stop_lost,other
+synonymous_variant,synonymous_variant
+unknown,unknown
